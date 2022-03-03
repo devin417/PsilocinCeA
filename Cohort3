@@ -1,0 +1,2090 @@
+clc
+clear all
+
+%SDK always stays the same
+SDKPATH = '/Volumes/Devin T7 HD/TDTSDK';
+addpath(genpath(SDKPATH));
+
+%change these depending on location and name of current data set
+Files(1,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/BASELINE/'};
+Files(2,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/TREATMENT/'};
+Files(3,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/TwoDay/'};
+Files(4,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/SixDAY/'};
+Files(5,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/FourWEEK/'};
+Files(6,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/INITIALAUDITORY/'};
+Files(7,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/FINALAUDITORY/'};
+Files(8,:) = {'/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/Extinction/'};
+
+
+
+cd '/Volumes/Devin T7 HD/Psilocin CeA Fiber Photometry/COHORT3/RAW DATA/'
+Condition = dir;
+ConditionNames = {Condition.name};
+ConditionNames = ConditionNames(3:end)';  %Creates the different conditions for catagorizing in structure
+
+%This order depends on how the files are arranged in the folder; Make them
+%in an order that makes sense
+Conditions(1,1)=ConditionNames(1,1);
+Conditions(2,1)=ConditionNames(7,1);
+Conditions(3,1)=ConditionNames(8,1);
+Conditions(4,1)=ConditionNames(6,1);
+Conditions(5,1)=ConditionNames(4,1);
+Conditions(6,1)=ConditionNames(5,1);
+Conditions(7,1)=ConditionNames(3,1);
+Conditions(8,1)=ConditionNames(2,1);
+% Conditions(8,1)=ConditionNames(10,1);
+% Conditions(9,1)=ConditionNames(12,1);
+
+
+%%
+for ii = 1:size(Conditions,1)
+    
+    
+    D = dir(Files{ii});
+    files = D;     files = files(~ismember({files(:).name},{'.','..','desktop.ini','.DS_Store','._.DS_Store'}));
+    
+    filenames = {files.name}';
+    % subdirs = filenames([files.isdir]);
+    %filenames = filenames(4:end)';
+
+    
+    for k=1:size(filenames,1)
+        
+        if startsWith(filenames(k,1),'.')
+            filenames{k,1}=[];
+        end
+        
+    end
+    
+    FileLogic=~cellfun('isempty',filenames);
+    filenames=filenames(FileLogic);
+    
+    for j=1:size(filenames,1)
+        subj=filenames{j,1};
+        subjects.(char(Conditions(ii))){j,1} = subj;
+        subjects.(char(Conditions(ii))){j,1} = strrep(subjects.(char(Conditions(ii))){j,1},'-','');
+        
+    end
+    
+    for i=1:size(filenames,1)
+        
+        
+        BLOCKPATH = [Files{ii} filenames{i}];
+        
+        
+        data = TDTbin2mat(BLOCKPATH);
+        
+        GroupData.((char(Conditions(ii)))).((char(filenames{i}))) = data;
+        
+        
+    end
+    
+    %% hi devin 
+    for jj=1:size(filenames,1)
+        
+        % Declare data stream and epoc names we will use downstream
+        % These are the field names for the relevant streams of the data struct
+        GCAMP = 'x465A';
+        ISOS = 'x405A';
+        if isfield(data.epocs, 'Puff')
+        Airpuff = 'Puff';
+        else
+        Airpuff = 'Note';
+        end
+        
+        GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).offset = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).onset + .1;
+       
+            
+        % Make some pretty colors for later plotting
+        % http://math.loyola.edu/~loberbro/matlab/html/colorsInMatlab.html
+        red = [0.8500, 0.3250, 0.0980];
+        green = [0.4660, 0.6740, 0.1880];
+        cyan = [0.3010, 0.7450, 0.9330];
+        gray1 = [.7 .7 .7];
+        gray2 = [.8 .8 .8];
+        
+        %% Basic plotting and artifact removal
+        % Make a time array based on number of samples and sample freq of
+        % demodulated streams
+        time = (1:length(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data))/GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).fs;
+        
+        
+        %% Artifact removal
+        % There is often a large artifact on the onset of LEDs turning on
+        % Remove data below a set time t
+        t = 2; % time threshold below which we will discard
+        ind = find(time>t,1); % find first index of when time crosses threshold
+        time = time(ind:end); % reformat vector to only include allowed time
+        GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data(ind:end);
+        GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data(ind:end);
+        
+        
+        %% Downsample data doing local averaging
+        % Average around every Nth point and downsample Nx
+        
+        N = 10; % multiplicative for downsampling
+        GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data = arrayfun(@(i)...
+            mean(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data(i:i+N-1)),...
+            1:N:length(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data)-N+1);
+        GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data = arrayfun(@(i)...
+            mean(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data(i:i+N-1)),...
+            1:N:length(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data)-N+1);
+        
+        %%
+        % Decimate time array and match length to demodulated stream
+        time = time(1:N:end);
+        time = time(1:length(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data));
+        
+        %% Correcting Corrupted Stream Size
+        
+        if size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data,2)~=size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data,2)
+            
+            if size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data,2)>size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data,2)
+                
+                GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data=GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data(1,1:size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data));
+            end
+            
+            if size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data,2)<size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data,2)
+                
+                GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data=GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data(1,1:size(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data,2));
+                
+            end
+        end
+        
+        
+        %% Detrending and dFF
+        bls = polyfit(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data,GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data,1);
+        Y_fit_all = bls(1) .* GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data + bls(2);
+        Y_dF_all = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).data - Y_fit_all; %dF (units mV) is not dFF
+        
+        %%
+        % Full dFF according to Lerner et al. 2015
+        % http://dx.doi.org/10.1016/j.cell.2015.07.014
+        % dFF using 405 fit as baseline
+        dFF = 100*(Y_dF_all)./Y_fit_all;
+        std_dFF = std(double(dFF));
+        ISOS = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(ISOS).data;
+        std_ISOS = std(double(ISOS));
+        
+        
+        %% Turn AIRPUFF Events into AIRPUFF Bouts
+        % Make a continuous time series of air puff events (epocs) and plot
+        
+        AIR_on = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).onset;
+        AIR_off = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).offset;
+        AIR_x = reshape(kron([AIR_on, AIR_off], [1, 1])', [], 1);
+        sz = length(AIR_on);
+        d = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).data';
+        d = ones(length(d),1)';
+        y_scale = 5; %adjust according to data needs
+        y_shift = -10; %scale and shift are just for asthetics
+        AIR_y = reshape([zeros(1, sz); d; d; zeros(1, sz)], 1, []);
+        
+        %% Time Filter Around AIR PUFF Bout Epocs
+        % Note that we are using dFF of the full time-series, not peri-event dFF
+        % where f0 is taken from a pre-event baseline period. That is done in
+        % another fiber photometry data analysis example.
+        
+        PRE_TIME = 5; % Five seconds before event onset
+        POST_TIME = 10; % ten seconds after
+        fs = GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).streams.(GCAMP).fs/N; % recall we downsampled by N = 100 earlier
+        % time span for peri-event filtering, PRE and POST
+        TRANGE = [-1*PRE_TIME*floor(fs),POST_TIME*floor(fs)];
+        
+        %%
+        % Pre-allocate memory
+        trials = numel(GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).onset);
+        dFF_snips = cell(trials,1);
+        ISOS_snips = cell(trials,1);
+        array_ind = zeros(trials,1);
+        pre_stim = zeros(trials,1);
+        post_stim = zeros(trials,1);
+        
+        %%
+        % Make stream snips based on trigger onset
+        for i = 1:trials
+            % If the bout cannot include pre-time seconds before event, make zero
+            if GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).onset(i) < PRE_TIME
+                dFF_snips{i} = single(zeros(1,(TRANGE(2)-TRANGE(1))));
+                ISOS_snips{i} = single(zeros(1,(TRANGE(2)-TRANGE(1))));
+                continue
+            else
+                % Find first time index after bout onset
+                array_ind(i) = find(time > GroupData.((char(Conditions(ii)))).((char(filenames{jj}))).epocs.(Airpuff).onset(i),1);
+                
+                % Find index corresponding to pre and post stim durations
+                pre_stim(i) = array_ind(i) + TRANGE(1);
+                post_stim(i) = array_ind(i) + TRANGE(2);
+                dFF_snips{i} = dFF(pre_stim(i):post_stim(i));
+                ISOS_snips{i} = ISOS(pre_stim(i):post_stim(i));
+            end
+        end
+        
+        %%
+        % Make all snippet cells the same size based on minimum snippet length
+        minLength = min(cellfun('prodofsize', dFF_snips));
+        dFF_snips = cellfun(@(x) x(1:minLength), dFF_snips, 'UniformOutput',false);
+        
+        % Convert to a matrix and get mean
+        allSignals = cell2mat(dFF_snips);
+        GROUP_allSignals = allSignals;
+        mean_allSignals = mean(allSignals);
+        std_allSignals = std(mean_allSignals);
+        
+        allSignals_ISOS = cell2mat(ISOS_snips);
+        GROUP_allSignals_ISOS = allSignals_ISOS;
+        mean_allSignals_ISOS = mean(allSignals_ISOS);
+        std_allSignals_ISOS = std(mean_allSignals);
+        
+        
+        % Make a time vector snippet for peri-events
+        peri_time = (1:length(mean_allSignals))/fs - PRE_TIME;
+        
+        
+        
+        GROUP_STREAM.((char(Conditions(ii)))).((char(filenames{jj}))).signal=(GROUP_allSignals);
+        GROUP_STREAM.((char(Conditions(ii)))).((char(filenames{jj}))).ISOS_signal=(GROUP_allSignals_ISOS);
+        GROUP_STREAM.((char(Conditions(ii)))).((char(filenames{jj}))).peri_time=(peri_time);
+        
+        
+    end
+end
+
+clear AIR* Air* all* array* bls cyan gray* green red BLOCK* Condition ConditionNames  d D data dFF* file* File* fs GC* i ii ind ISOS* j* mean* min* N* peri* post* POST* pre* PRE* std* subj sz t time TRANGE trials Y* y*
+%%
+save(strcat('Cohort3_TOTALData_Corrected',string(datetime('now','Format','MMddyy'))),'-v7.3');
+
+
+%% Psilocin Baseline
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.BASELINE,1)
+    
+    if startsWith(subjects.BASELINE(i,1),'P')
+        for ii=1:size(GROUP_STREAM.BASELINE.(subjects.BASELINE{i}).signal,1)
+            P_Baseline(ii,:)= GROUP_STREAM.BASELINE.(subjects.BASELINE{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_Baseline,1);
+        std_Signal = std(P_Baseline,1);
+        peri_time = GROUP_STREAM.BASELINE.(subjects.BASELINE{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_Mean_BASELINE_Signal(i,:)=mean(P_Baseline,1);
+        P_BASELINE_AUC(i,:)=AUC_Post;
+        P_BASELINE_PP(i,:)=Post_Peak;
+        P_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.BASELINE{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_Mean_BASELINE_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_Baseline_Bins{ii,k} = mean(P_Mean_BASELINE_Signal(ii,nn:nn+49));
+%             V_Base_Binned_Stream{k} = mean(V_Baseline(:,nn:nn+49));
+%             V_Base_Binned_SEM{k} = std(V_Baseline(:,nn:nn+49));
+%             V_Base_Binned_STD{k} = mean(P_STD_Baseline(:,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_Baseline_Bins = cell2mat(P_Baseline_Bins);
+P_Baseline_Bins2 = mean(P_Baseline_Bins,1);
+P_STD_Baseline_Bins = std(P_Baseline_Bins,1);
+P_SEM_Baseline_Bins = std(P_Baseline_Bins,1)/sqrt(length(std(P_Baseline_Bins,1)));
+
+% Group Stats
+P_Baseline = mean(P_Mean_BASELINE_Signal,1);
+P_STD_Baseline = std(P_Mean_BASELINE_Signal,1);
+P_SEM_Baseline = std(P_Mean_BASELINE_Signal,1)/sqrt(length(std(P_Mean_BASELINE_Signal,1)));
+
+% Group plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_Baseline + P_STD_Baseline,...
+    fliplr(P_Baseline - P_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_Mean_BASELINE_Signal)),min(yy));
+linemax = max(max(max(P_Mean_BASELINE_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_Mean_BASELINE_Signal', 'color', gray1);
+p2 = plot(peri_time, P_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northwest');
+title('Psilocin Peri-Event Trial Responses','fontsize',28);
+ylabel('\DeltaF/F','fontsize',24);
+xlabel('Time (s)','fontsize',24);
+yticks([0 2 4 6 8 10])
+axis tight;
+axis.FontSize = 18;
+
+%% Vehicle Baseline
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.BASELINE,1)
+    
+    if startsWith(subjects.BASELINE(i,1),'V')
+        for ii=1:size(GROUP_STREAM.BASELINE.(subjects.BASELINE{i}).signal,1)
+            V_Baseline(ii,:)= GROUP_STREAM.BASELINE.(subjects.BASELINE{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_Baseline,1);
+        std_Signal = std(V_Baseline,1);
+        peri_time = GROUP_STREAM.BASELINE.(subjects.BASELINE{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_Mean_BASELINE_Signal(i,:)=Mean_Signal;
+        V_BASELINE_AUC(i,:)=AUC_Post;
+        V_BASELINE_PP(i,:)=Post_Peak;
+        V_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.BASELINE{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_Mean_BASELINE_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_Baseline_Bins{ii,k} = mean(V_Mean_BASELINE_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_Baseline_Bins = cell2mat(V_Baseline_Bins);
+V_Baseline_Bins(~any(V_Baseline_Bins,2),:) = [];
+V_Baseline_Bins2 = mean(V_Baseline_Bins,1);
+V_STD_Baseline_Bins = std(V_Baseline_Bins,1);
+V_SEM_Baseline_Bins = std(V_Baseline_Bins,1)/sqrt(length(std(V_Baseline_Bins,1)));
+
+%Group Stats
+V_Mean_BASELINE_Signal(~any(V_Mean_BASELINE_Signal,2),:) = [];
+V_Baseline = mean(V_Mean_BASELINE_Signal,1);
+V_STD_Baseline = std(V_Mean_BASELINE_Signal,1);
+V_SEM_Baseline = std(V_Mean_BASELINE_Signal,1)/sqrt(length(std(V_Mean_BASELINE_Signal,1)));
+
+% Group plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_Baseline + V_STD_Baseline,...
+    fliplr(V_Baseline - V_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_Mean_BASELINE_Signal)),min(yy));
+linemax = max(max(max(V_Mean_BASELINE_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_Mean_BASELINE_Signal', 'color', gray1);
+p2 = plot(peri_time, V_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% Psilocin Treatment
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.TREATMENT,1)
+    
+    if startsWith(subjects.TREATMENT(i,1),'P')
+        for ii=1:size(GROUP_STREAM.TREATMENT.(subjects.TREATMENT{i}).signal,1)
+            P_TREATMENT_Baseline(ii,:)= GROUP_STREAM.TREATMENT.(subjects.TREATMENT{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_TREATMENT_Baseline,1);
+        std_Signal = std(P_TREATMENT_Baseline,1);
+        peri_time = GROUP_STREAM.TREATMENT.(subjects.TREATMENT{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_TREATMENT_Mean_Signal(i,:)=mean(P_TREATMENT_Baseline,1);
+        P_TREATMENT_BASELINE_AUC(i,:)=AUC_Post;
+        P_TREATMENT_BASELINE_PP(i,:)=Post_Peak;
+        P_TREATMENT_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_TREATMENT_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.TREATMENT{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_TREATMENT_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_TREATMENT_Bins{ii,k} = mean(P_TREATMENT_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_TREATMENT_Bins = cell2mat(P_TREATMENT_Bins);
+P_TREATMENT_Bins2 = mean(P_TREATMENT_Bins,1);
+P_STD_TREATMENT_Bins = std(P_TREATMENT_Bins,1);
+P_SEM_TREATMENT_Bins = std(P_TREATMENT_Bins,1)/sqrt(length(std(P_TREATMENT_Bins,1)));
+
+% Group Stats
+P_TREATMENT_Baseline = mean(P_TREATMENT_Mean_Signal,1);
+P_TREATMENT_STD_Baseline = std(P_TREATMENT_Mean_Signal,1);
+P_TREATMENT_SEM_Baseline = std(P_TREATMENT_Mean_Signal,1)/sqrt(length(std(P_TREATMENT_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_TREATMENT_Baseline + P_TREATMENT_STD_Baseline,...
+    fliplr(P_TREATMENT_Baseline - P_TREATMENT_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_TREATMENT_Mean_Signal)),min(yy));
+linemax = max(max(max(P_TREATMENT_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_TREATMENT_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, P_TREATMENT_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Psilocin: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+
+%% Vehicle Treatment
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.TREATMENT,1)
+    
+    if startsWith(subjects.TREATMENT(i,1),'V')
+        for ii=1:size(GROUP_STREAM.TREATMENT.(subjects.TREATMENT{i}).signal,1)
+            V_TREATMENT_Baseline(ii,:)= GROUP_STREAM.TREATMENT.(subjects.TREATMENT{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_TREATMENT_Baseline,1);
+        std_Signal = std(V_TREATMENT_Baseline,1);
+        peri_time = GROUP_STREAM.TREATMENT.(subjects.TREATMENT{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_TREATMENT_Mean_Signal(i,:)=mean(V_TREATMENT_Baseline,1);
+        V_TREATMENT_BASELINE_AUC(i,:)=AUC_Post;
+        V_TREATMENT_BASELINE_PP(i,:)=Post_Peak;
+        V_TREATMENT_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_TREATMENT_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.TREATMENT{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_TREATMENT_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_TREATMENT_Bins{ii,k} = mean(V_TREATMENT_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_TREATMENT_Bins = cell2mat(V_TREATMENT_Bins);
+V_TREATMENT_Bins(~any(V_TREATMENT_Bins,2),:) = [];
+V_TREATMENT_Bins2 = mean(V_TREATMENT_Bins,1);
+V_STD_TREATMENT_Bins = std(V_TREATMENT_Bins,1);
+V_SEM_TREATMENT_Bins = std(V_TREATMENT_Bins,1)/sqrt(length(std(V_TREATMENT_Bins,1)));
+
+% GROUP STATS
+V_TREATMENT_Mean_Signal(~any(V_TREATMENT_Mean_Signal,2),:) = [];
+V_TREATMENT_Baseline = mean(V_TREATMENT_Mean_Signal,1);
+V_TREATMENT_STD_Baseline = std(V_TREATMENT_Mean_Signal,1);
+V_TREATMENT_SEM_Baseline = std(V_TREATMENT_Mean_Signal,1)/sqrt(length(std(V_TREATMENT_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_TREATMENT_Baseline + V_TREATMENT_STD_Baseline,...
+    fliplr(V_TREATMENT_Baseline - V_TREATMENT_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_TREATMENT_Mean_Signal)),min(yy));
+linemax = max(max(max(V_TREATMENT_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_TREATMENT_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, V_TREATMENT_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% Psilocin Two Day
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.TwoDay,1)
+    
+    if startsWith(subjects.TwoDay(i,1),'P')
+        for ii=1:size(GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).signal,1)
+            P_TwoDay_Baseline(ii,:)= GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_TwoDay_Baseline,1);
+        std_Signal = std(P_TwoDay_Baseline,1);
+        peri_time = GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_TwoDay_Mean_Signal(i,:)=mean(P_TwoDay_Baseline,1);
+        P_TwoDay_BASELINE_AUC(i,:)=AUC_Post;
+        P_TwoDay_BASELINE_PP(i,:)=Post_Peak;
+        P_TwoDay_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_TwoDay_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.TwoDay{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_TwoDay_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_TwoDay_Bins{ii,k} = mean(P_TwoDay_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_TwoDay_Bins = cell2mat(P_TwoDay_Bins);
+P_TwoDay_Bins2 = mean(P_TwoDay_Bins,1);
+P_STD_TwoDay_Bins = std(P_TwoDay_Bins,1);
+P_SEM_TwoDay_Bins = std(P_TwoDay_Bins,1)/sqrt(length(std(P_TwoDay_Bins,1)));
+
+% Group Stats
+
+P_TwoDay_Baseline = mean(P_TwoDay_Mean_Signal,1);
+TwoDay_STD_Baseline = std(P_TwoDay_Mean_Signal,1);
+TwoDay_SEM_Baseline = std(P_TwoDay_Mean_Signal,1)/sqrt(length(std(P_TwoDay_Mean_Signal,1)));
+
+% Group Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_TwoDay_Baseline + TwoDay_STD_Baseline,...
+    fliplr(P_TwoDay_Baseline - TwoDay_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_TwoDay_Mean_Signal)),min(yy));
+linemax = max(max(max(P_TwoDay_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_TwoDay_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, P_TwoDay_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Psilocin Two Day Follow Up: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+
+%% Vehicle Two Day
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.TwoDay,1)
+    
+    if startsWith(subjects.TwoDay(i,1),'V')
+        for ii=1:size(GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).signal,1)
+            V_TwoDay_Baseline(ii,:)= GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_TwoDay_Baseline,1);
+        std_Signal = std(V_TwoDay_Baseline,1);
+        peri_time = GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_TwoDay_Mean_Signal(i,:)=mean(V_TwoDay_Baseline,1);
+        V_TwoDay_BASELINE_AUC(i,:)=AUC_Post;
+        V_TwoDay_BASELINE_PP(i,:)=Post_Peak;
+        V_TwoDay_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_TwoDay_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.TwoDay{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_TwoDay_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_TwoDay_Bins{ii,k} = mean(V_TwoDay_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_TwoDay_Bins = cell2mat(V_TwoDay_Bins);
+V_TwoDay_Bins(~any(V_TwoDay_Bins,2),:) = [];
+V_TwoDay_Bins2 = mean(V_TwoDay_Bins,1);
+V_STD_TwoDay_Bins = std(V_TwoDay_Bins,1);
+V_SEM_TwoDay_Bins = std(V_TwoDay_Bins,1)/sqrt(length(std(V_TwoDay_Bins,1)));
+
+% Group Stats
+V_TwoDay_Mean_Signal(~any(V_TwoDay_Mean_Signal,2),:) = [];
+V_TwoDay_Baseline = mean(V_TwoDay_Mean_Signal,1);
+V_TwoDay_STD_Baseline = std(V_TwoDay_Mean_Signal,1);
+V_TwoDay_SEM_Baseline = std(V_TwoDay_Mean_Signal,1)/sqrt(length(std(V_TwoDay_Mean_Signal,1)));
+
+% Group Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_TwoDay_Baseline + V_TwoDay_STD_Baseline,...
+    fliplr(V_TwoDay_Baseline - V_TwoDay_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_TwoDay_Mean_Signal)),min(yy));
+linemax = max(max(max(V_TwoDay_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_TwoDay_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, V_TwoDay_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle Two Day Follow up: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% Psilocin Six Day
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.SixDAY,1)
+    
+    if startsWith(subjects.SixDAY(i,1),'P')
+        for ii=1:size(GROUP_STREAM.SixDAY.(subjects.SixDAY{i}).signal,1)
+            P_SixDAY_Baseline(ii,:)= GROUP_STREAM.SixDAY.(subjects.SixDAY{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_SixDAY_Baseline,1);
+        std_Signal = std(P_SixDAY_Baseline,1);
+        peri_time = GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_SixDAY_Mean_Signal(i,:)=mean(P_SixDAY_Baseline,1);
+        P_SixDAY_BASELINE_AUC(i,:)=AUC_Post;
+        P_SixDAY_BASELINE_PP(i,:)=Post_Peak;
+        P_SixDAY_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_SixDAY_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.SixDAY{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_SixDAY_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_SixDAY_Bins{ii,k} = mean(P_SixDAY_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_SixDAY_Bins = cell2mat(P_SixDAY_Bins);
+P_SixDAY_Bins2 = mean(P_SixDAY_Bins,1);
+P_STD_SixDAY_Bins = std(P_SixDAY_Bins,1);
+P_SEM_SixDAY_Bins = std(P_SixDAY_Bins,1)/sqrt(length(std(P_SixDAY_Bins,1)));
+
+% Group Stats
+
+P_SixDAY_Baseline = mean(P_SixDAY_Mean_Signal,1);
+P_SixDAY_STD_Baseline = std(P_SixDAY_Mean_Signal,1);
+P_SixDAY_SEM_Baseline = std(P_SixDAY_Mean_Signal,1)/sqrt(length(std(P_SixDAY_Mean_Signal,1)));
+
+% Group Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_SixDAY_Baseline + P_SixDAY_STD_Baseline,...
+    fliplr(P_SixDAY_Baseline - P_SixDAY_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_SixDAY_Mean_Signal)),min(yy));
+linemax = max(max(max(P_SixDAY_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_SixDAY_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, P_SixDAY_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Psilocin Six Day Follow Up: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% Vehicle Six Day
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.SixDAY,1)
+    
+    if startsWith(subjects.SixDAY(i,1),'V')
+        for ii=1:size(GROUP_STREAM.SixDAY.(subjects.SixDAY{i}).signal,1)
+            V_SixDAY_Baseline(ii,:)= GROUP_STREAM.SixDAY.(subjects.SixDAY{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_SixDAY_Baseline,1);
+        std_Signal = std(V_SixDAY_Baseline,1);
+        peri_time = GROUP_STREAM.TwoDay.(subjects.TwoDay{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_SixDAY_Mean_Signal(i,:)=mean(V_SixDAY_Baseline,1);
+        V_SixDAY_BASELINE_AUC(i,:)=AUC_Post;
+        V_SixDAY_BASELINE_PP(i,:)=Post_Peak;
+        V_SixDAY_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_SixDAY_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.SixDAY{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_SixDAY_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_SixDAY_Bins{ii,k} = mean(V_SixDAY_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_SixDAY_Bins = cell2mat(V_SixDAY_Bins);
+V_SixDAY_Bins(~any(V_SixDAY_Bins,2),:) = [];
+V_SixDAY_Bins2 = mean(V_SixDAY_Bins,1);
+V_STD_SixDAY_Bins = std(V_SixDAY_Bins,1);
+V_SEM_SixDAY_Bins = std(V_SixDAY_Bins,1)/sqrt(length(std(V_SixDAY_Bins,1)));
+
+% Group Stats
+V_SixDAY_Mean_Signal(~any(V_SixDAY_Mean_Signal,2),:) = [];
+V_SixDAY_Baseline = mean(V_SixDAY_Mean_Signal,1);
+V_SixDAY_STD_Baseline = std(V_SixDAY_Mean_Signal,1);
+V_SixDAY_SEM_Baseline = std(V_SixDAY_Mean_Signal,1)/sqrt(length(std(V_SixDAY_Mean_Signal,1)));
+
+% Group Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_SixDAY_Baseline + V_SixDAY_STD_Baseline,...
+    fliplr(V_SixDAY_Baseline - V_SixDAY_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_SixDAY_Mean_Signal)),min(yy));
+linemax = max(max(max(V_SixDAY_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_SixDAY_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, V_SixDAY_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle Six Day Follow Up: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% Psilocin 28 Day
+
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.FourWEEK,1)
+    
+    if startsWith(subjects.FourWEEK(i,1),'P')
+        for ii=1:size(GROUP_STREAM.FourWEEK.(subjects.FourWEEK{i}).signal,1)
+            P_FourWEEK_Baseline(ii,:)= GROUP_STREAM.FourWEEK.(subjects.FourWEEK{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_FourWEEK_Baseline,1);
+        std_Signal = std(P_FourWEEK_Baseline,1);
+        peri_time = GROUP_STREAM.FourWEEK.(subjects.FourWEEK{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_FourWEEK_Mean_Signal(i,:)=mean(P_FourWEEK_Baseline,1);
+        P_FourWEEK_BASELINE_AUC(i,:)=AUC_Post;
+        P_FourWEEK_BASELINE_PP(i,:)=Post_Peak;
+        P_FourWEEK_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_FourWEEK_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.FourWEEK{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_FourWEEK_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_FourWEEK_Bins{ii,k} = mean(P_FourWEEK_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_FourWEEK_Bins = cell2mat(P_FourWEEK_Bins);
+P_FourWeek_Bins2 = mean(P_FourWEEK_Bins,1);
+P_STD_FourWeek_Bins = std(P_FourWEEK_Bins,1);
+P_SEM_FourWeek_Bins = std(P_FourWEEK_Bins,1)/sqrt(length(std(P_FourWEEK_Bins,1)));
+
+% Group Stats
+P_FourWEEK_Baseline = mean(P_FourWEEK_Mean_Signal,1);
+P_FourWEEK_STD_Baseline = std(P_FourWEEK_Mean_Signal,1);
+P_FourWEEK_SEM_Baseline = std(P_FourWEEK_Mean_Signal,1)/sqrt(length(std(P_FourWEEK_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_FourWEEK_Baseline + P_FourWEEK_STD_Baseline,...
+    fliplr(P_FourWEEK_Baseline - P_FourWEEK_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_FourWEEK_Mean_Signal)),min(yy));
+linemax = max(max(max(P_FourWEEK_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_FourWEEK_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, P_FourWEEK_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Psilocin FourWEEK: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+
+
+%% Vehicle 28 Day
+
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.FourWEEK,1)
+    
+    if startsWith(subjects.FourWEEK(i,1),'V')
+        for ii=1:size(GROUP_STREAM.FourWEEK.(subjects.FourWEEK{i}).signal,1)
+            V_FourWEEK_Baseline(ii,:)= GROUP_STREAM.FourWEEK.(subjects.FourWEEK{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_FourWEEK_Baseline,1);
+        std_Signal = std(V_FourWEEK_Baseline,1);
+        peri_time = GROUP_STREAM.FourWEEK.(subjects.FourWEEK{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_FourWEEK_Mean_Signal(i,:)=mean(V_FourWEEK_Baseline,1);
+        V_FourWEEK_BASELINE_AUC(i,:)=AUC_Post;
+        V_FourWEEK_BASELINE_PP(i,:)=Post_Peak;
+        V_FourWEEK_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_FourWEEK_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.FourWEEK{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_FourWEEK_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_FourWEEK_Bins{ii,k} = mean(V_FourWEEK_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_FourWEEK_Bins = cell2mat(V_FourWEEK_Bins);
+V_FourWEEK_Bins(~any(V_FourWEEK_Bins,2),:) = [];
+V_FourWEEK_Bins2 = mean(V_FourWEEK_Bins,1);
+V_STD_FourWEEK_Bins = std(V_FourWEEK_Bins,1);
+V_SEM_FourWEEK_Bins = std(V_FourWEEK_Bins,1)/sqrt(length(std(V_FourWEEK_Bins,1)));
+
+% Group Stats
+V_FourWEEK_Mean_Signal(~any(V_FourWEEK_Mean_Signal,2),:) = [];
+V_FourWEEK_Baseline = mean(V_FourWEEK_Mean_Signal,1);
+V_FourWEEK_STD_Baseline = std(V_FourWEEK_Mean_Signal,1);
+V_FourWEEK_SEM_Baseline = std(V_FourWEEK_Mean_Signal,1)/sqrt(length(std(V_FourWEEK_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_FourWEEK_Baseline + V_FourWEEK_STD_Baseline,...
+    fliplr(V_FourWEEK_Baseline - V_FourWEEK_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_FourWEEK_Mean_Signal)),min(yy));
+linemax = max(max(max(V_FourWEEK_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_FourWEEK_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, V_FourWEEK_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle FourWEEK: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% PSILOCIN INITIAL AUDITORY
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.INITIALAUDITORY,1)
+    
+    if startsWith(subjects.INITIALAUDITORY(i,1),'P')
+        for ii=1:size(GROUP_STREAM.INITIALAUDITORY.(subjects.INITIALAUDITORY{i}).signal,1)
+            P_INITIALAUDITORY_Baseline(ii,:)= GROUP_STREAM.INITIALAUDITORY.(subjects.INITIALAUDITORY{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_INITIALAUDITORY_Baseline,1);
+        std_Signal = std(P_INITIALAUDITORY_Baseline,1);
+        peri_time = GROUP_STREAM.INITIALAUDITORY.(subjects.INITIALAUDITORY{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_INITIALAUDITORY_Mean_Signal(i,:)=mean(P_INITIALAUDITORY_Baseline,1);
+        P_INITIALAUDITORY_BASELINE_AUC(i,:)=AUC_Post;
+        P_INITIALAUDITORY_BASELINE_PP(i,:)=Post_Peak;
+        P_INITIALAUDITORY_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_INITIALAUDITORY_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.INITIALAUDITORY{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_INITIALAUDITORY_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_INITIALAUDITORY_Bins{ii,k} = mean(P_INITIALAUDITORY_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_INITIALAUDITORY_Bins = cell2mat(P_INITIALAUDITORY_Bins);
+P_INITIALAUDITORY_Bins2 = mean(P_INITIALAUDITORY_Bins,1);
+P_STD_INITIALAUDITORY_Bins = std(P_INITIALAUDITORY_Bins,1);
+P_SEM_INITIALAUDITORY_Bins = std(P_INITIALAUDITORY_Bins,1)/sqrt(length(std(P_INITIALAUDITORY_Bins,1)));
+
+% Group Stats
+P_INITIALAUDITORY_Baseline = mean(P_INITIALAUDITORY_Mean_Signal,1);
+P_INITIALAUDITORY_STD_Baseline = std(P_INITIALAUDITORY_Mean_Signal,1);
+P_INITIALAUDITORY_SEM_Baseline = std(P_INITIALAUDITORY_Mean_Signal,1)/sqrt(length(std(P_INITIALAUDITORY_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_INITIALAUDITORY_Baseline + P_INITIALAUDITORY_STD_Baseline,...
+    fliplr(P_INITIALAUDITORY_Baseline - P_INITIALAUDITORY_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_INITIALAUDITORY_Mean_Signal)),min(yy));
+linemax = max(max(max(P_INITIALAUDITORY_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_INITIALAUDITORY_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, P_INITIALAUDITORY_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Psilocin INITIALAUDITORY: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% VEHICLE INITIAL AUDITORY
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.INITIALAUDITORY,1)
+    
+    if startsWith(subjects.INITIALAUDITORY(i,1),'V')
+        for ii=1:size(GROUP_STREAM.INITIALAUDITORY.(subjects.INITIALAUDITORY{i}).signal,1)
+            V_INITIALAUDITORY_Baseline(ii,:)= GROUP_STREAM.INITIALAUDITORY.(subjects.INITIALAUDITORY{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_INITIALAUDITORY_Baseline,1);
+        std_Signal = std(V_INITIALAUDITORY_Baseline,1);
+        peri_time = GROUP_STREAM.INITIALAUDITORY.(subjects.INITIALAUDITORY{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_INITIALAUDITORY_Mean_Signal(i,:)=mean(V_INITIALAUDITORY_Baseline,1);
+        V_INITIALAUDITORY_BASELINE_AUC(i,:)=AUC_Post;
+        V_INITIALAUDITORY_BASELINE_PP(i,:)=Post_Peak;
+        V_INITIALAUDITORY_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_INITIALAUDITORY_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.INITIALAUDITORY{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_INITIALAUDITORY_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_INITIALAUDITORY_Bins{ii,k} = mean(V_INITIALAUDITORY_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_INITIALAUDITORY_Bins = cell2mat(V_INITIALAUDITORY_Bins);
+V_INITIALAUDITORY_Bins(~any(V_INITIALAUDITORY_Bins,2),:) = [];
+V_INITIALAUDITORY_Bins2 = mean(V_INITIALAUDITORY_Bins,1);
+V_STD_INITIALAUDITORY_Bins = std(V_INITIALAUDITORY_Bins,1);
+V_SEM_INITIALAUDITORY_Bins = std(V_INITIALAUDITORY_Bins,1)/sqrt(length(std(V_INITIALAUDITORY_Bins,1)));
+
+% Group Stats
+V_INITIALAUDITORY_Baseline = mean(V_INITIALAUDITORY_Mean_Signal,1);
+V_INITIALAUDITORY_STD_Baseline = std(V_INITIALAUDITORY_Mean_Signal,1);
+V_INITIALAUDITORY_SEM_Baseline = std(V_INITIALAUDITORY_Mean_Signal,1)/sqrt(length(std(V_INITIALAUDITORY_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_INITIALAUDITORY_Baseline + V_INITIALAUDITORY_STD_Baseline,...
+    fliplr(V_INITIALAUDITORY_Baseline - V_INITIALAUDITORY_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_INITIALAUDITORY_Mean_Signal)),min(yy));
+linemax = max(max(max(V_INITIALAUDITORY_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_INITIALAUDITORY_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, V_INITIALAUDITORY_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle INITIALAUDITORY: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% PSILOCIN FINAL AUDITORY
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.FINALAUDITORY,1)
+    
+    if startsWith(subjects.FINALAUDITORY(i,1),'P')
+        for ii=1:size(GROUP_STREAM.FINALAUDITORY.(subjects.FINALAUDITORY{i}).signal,1)
+            P_FINALAUDITORY_Baseline(ii,:)= GROUP_STREAM.FINALAUDITORY.(subjects.FINALAUDITORY{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_FINALAUDITORY_Baseline,1);
+        std_Signal = std(P_FINALAUDITORY_Baseline,1);
+        peri_time = GROUP_STREAM.FINALAUDITORY.(subjects.FINALAUDITORY{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_FINALAUDITORY_Mean_Signal(i,:)=mean(P_FINALAUDITORY_Baseline,1);
+        P_FINALAUDITORY_BASELINE_AUC(i,:)=AUC_Post;
+        P_FINALAUDITORY_BASELINE_PP(i,:)=Post_Peak;
+        P_FINALAUDITORY_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_FINALAUDITORY_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.FINALAUDITORY{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_FINALAUDITORY_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_FINALAUDITORY_Bins{ii,k} = mean(P_FINALAUDITORY_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_FINALAUDITORY_Bins = cell2mat(P_FINALAUDITORY_Bins);
+P_FINALAUDITORY_Bins2 = mean(P_FINALAUDITORY_Bins,1);
+P_STD_FINALAUDITORY_Bins = std(P_FINALAUDITORY_Bins,1);
+P_SEM_FINALAUDITORY_Bins = std(P_FINALAUDITORY_Bins,1)/sqrt(length(std(P_FINALAUDITORY_Bins,1)));
+
+% Group Stats
+P_FINALAUDITORY_Baseline = mean(P_FINALAUDITORY_Mean_Signal,1);
+P_FINALAUDITORY_STD_Baseline = std(P_FINALAUDITORY_Mean_Signal,1);
+P_FINALAUDITORY_SEM_Baseline = std(P_FINALAUDITORY_Mean_Signal,1)/sqrt(length(std(P_FINALAUDITORY_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_FINALAUDITORY_Baseline + P_FINALAUDITORY_STD_Baseline,...
+    fliplr(P_FINALAUDITORY_Baseline - P_FINALAUDITORY_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_FINALAUDITORY_Mean_Signal)),min(yy));
+linemax = max(max(max(P_FINALAUDITORY_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_FINALAUDITORY_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, P_FINALAUDITORY_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Psilocin FINALAUDITORY: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+
+%% VEHICLE FINAL AUDITORYc
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+
+for i=1:size(subjects.FINALAUDITORY,1)
+    
+    if startsWith(subjects.FINALAUDITORY(i,1),'V')
+        for ii=1:size(GROUP_STREAM.FINALAUDITORY.(subjects.FINALAUDITORY{i}).signal,1)
+            V_FINALAUDITORY_Baseline(ii,:)= GROUP_STREAM.FINALAUDITORY.(subjects.FINALAUDITORY{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_FINALAUDITORY_Baseline,1);
+        std_Signal = std(V_FINALAUDITORY_Baseline,1);
+        peri_time = GROUP_STREAM.FINALAUDITORY.(subjects.FINALAUDITORY{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_FINALAUDITORY_Mean_Signal(i,:)=mean(V_FINALAUDITORY_Baseline,1);
+        V_FINALAUDITORY_BASELINE_AUC(i,:)=AUC_Post;
+        V_FINALAUDITORY_BASELINE_PP(i,:)=Post_Peak;
+        V_FINALAUDITORY_BASELINE_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_FINALAUDITORY_Baseline', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.FINALAUDITORY{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_FINALAUDITORY_Mean_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_FINALAUDITORY_Bins{ii,k} = mean(V_FINALAUDITORY_Mean_Signal(ii,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_FINALAUDITORY_Bins = cell2mat(V_FINALAUDITORY_Bins);
+V_FINALAUDITORY_Bins(~any(V_FINALAUDITORY_Bins,2),:) = [];
+V_FINALAUDITORY_Bins2 = mean(V_FINALAUDITORY_Bins,1);
+V_STD_FINALAUDITORY_Bins = std(V_FINALAUDITORY_Bins,1);
+V_SEM_FINALAUDITORY_Bins = std(V_FINALAUDITORY_Bins,1)/sqrt(length(std(V_FINALAUDITORY_Bins,1)));
+
+% Group Stats
+V_FINALAUDITORY_Baseline = mean(V_FINALAUDITORY_Mean_Signal,1);
+V_FINALAUDITORY_STD_Baseline = std(V_FINALAUDITORY_Mean_Signal,1);
+V_FINALAUDITORY_SEM_Baseline = std(V_FINALAUDITORY_Mean_Signal,1)/sqrt(length(std(V_FINALAUDITORY_Mean_Signal,1)));
+
+% Plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_FINALAUDITORY_Baseline + V_FINALAUDITORY_STD_Baseline,...
+    fliplr(V_FINALAUDITORY_Baseline - V_FINALAUDITORY_STD_Baseline)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_FINALAUDITORY_Mean_Signal)),min(yy));
+linemax = max(max(max(V_FINALAUDITORY_Mean_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_FINALAUDITORY_Mean_Signal', 'color', gray1);
+p2 = plot(peri_time, V_FINALAUDITORY_Baseline, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northeast');
+title('Vehicle FINALAUDITORY: Peri-Event Trial Responses','fontsize',16);
+ylabel('\DeltaF/F','fontsize',16);
+axis tight;
+
+%% Psilocin FREESOCIAL
+
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.FREESOCIAL,1)
+    
+    if startsWith(subjects.FREESOCIAL(i,1),'P')
+        for ii=1:size(GROUP_STREAM.FREESOCIAL.(subjects.FREESOCIAL{i}).signal,1)
+            P_FREESOCIAL(ii,:)= GROUP_STREAM.FREESOCIAL.(subjects.FREESOCIAL{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(P_FREESOCIAL,1);
+        std_Signal = std(P_FREESOCIAL,1);
+        peri_time = GROUP_STREAM.FREESOCIAL.(subjects.FREESOCIAL{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        P_Mean_FREESOCIAL_Signal(i,:)=mean(P_FREESOCIAL,1);
+        P_FREESOCIAL_AUC(i,:)=AUC_Post;
+        P_FREESOCIAL_PP(i,:)=Post_Peak;
+        P_FREESOCIAL_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        %Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+%         
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, P_FREESOCIAL', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2,h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.FREESOCIAL{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(P_Mean_FREESOCIAL_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            P_FREESOCIAL_Bins{ii,k} = mean(P_Mean_FREESOCIAL_Signal(ii,nn:nn+49));
+%             V_Base_Binned_Stream{k} = mean(V_Baseline(:,nn:nn+49));
+%             V_Base_Binned_SEM{k} = std(V_Baseline(:,nn:nn+49));
+%             V_Base_Binned_STD{k} = mean(P_STD_Baseline(:,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+P_FREESOCIAL_Bins = cell2mat(P_FREESOCIAL_Bins);
+P_FREESOCIAL_Bins2 = mean(P_FREESOCIAL_Bins,1);
+P_STD_FREESOCIAL_Bins = std(P_FREESOCIAL_Bins,1);
+P_SEM_FREESOCIAL_Bins = std(P_FREESOCIAL_Bins,1)/sqrt(length(std(P_FREESOCIAL_Bins,1)));
+
+% Group Stats
+P_FREESOCIAL = mean(P_Mean_FREESOCIAL_Signal,1);
+P_STD_FREESOCIAL = std(P_Mean_FREESOCIAL_Signal,1);
+P_SEM_FREESOCIAL = std(P_Mean_FREESOCIAL_Signal,1)/sqrt(length(std(P_Mean_FREESOCIAL_Signal,1)));
+
+% Group plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [P_FREESOCIAL + P_STD_FREESOCIAL,...
+    fliplr(P_FREESOCIAL - P_STD_FREESOCIAL)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(P_Mean_FREESOCIAL_Signal)),min(yy));
+linemax = max(max(max(P_Mean_FREESOCIAL_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, P_Mean_FREESOCIAL_Signal', 'color', gray1);
+p2 = plot(peri_time, P_FREESOCIAL, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northwest');
+title('Psilocin FREESOCIAL Peri-Event Trial Responses','fontsize',24);
+ylabel('\DeltaF/F','fontsize',22);
+xlabel('Time (s)','fontsize',22);
+% yticks([0 2 4 6 8 10])
+axis tight;
+axis.FontSize = 18;
+
+%% VEHICLE FREESOCIAL
+green = [0.4660, 0.6740, 0.1880];
+cyan = [0.3010, 0.7450, 0.9330];
+gray1 = [.7 .7 .7];
+gray2 = [.8 .8 .8];
+for i=1:size(subjects.FREESOCIAL,1)
+    
+    if startsWith(subjects.FREESOCIAL(i,1),'V')
+        for ii=1:size(GROUP_STREAM.FREESOCIAL.(subjects.FREESOCIAL{i}).signal,1)
+            V_FREESOCIAL(ii,:)= GROUP_STREAM.FREESOCIAL.(subjects.FREESOCIAL{i}).signal(ii,:);
+        end
+        
+        Mean_Signal = mean(V_FREESOCIAL,1);
+        std_Signal = std(V_FREESOCIAL,1);
+        peri_time = GROUP_STREAM.FREESOCIAL.(subjects.FREESOCIAL{i}).peri_time;
+        Post_event = Mean_Signal(509:end);
+        Post_Peak_event = Mean_Signal(509:end);
+        Post_Peak = max(Post_Peak_event);
+        AUC_Post = sum(Post_event);
+        Post_Peak_Latency = find(Post_Peak_event==Post_Peak);
+        
+        V_Mean_FREESOCIAL_Signal(i,:)=mean(V_FREESOCIAL,1);
+        V_Mean_FREESOCIAL_Signal(~any(V_Mean_FREESOCIAL_Signal,2),:) = [];
+        V_FREESOCIAL_AUC(i,:)=AUC_Post;
+        V_FREESOCIAL_PP(i,:)=Post_Peak;
+        V_FREESOCIAL_PP_LATENCY(i,:)=Post_Peak_Latency;
+        
+        % Plot
+        figure('Position',[100, 100, 600, 750])
+        subplot(2,1,1)
+        xx = [peri_time, fliplr(peri_time)];
+        yy = [Mean_Signal + std_Signal,...
+            fliplr(Mean_Signal - std_Signal)];
+        h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+        hold on;
+        set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+        
+        % Set specs for min and max value of event line.
+        % Min and max of either std or one of the signal snip traces
+        linemin = min(min(min(Mean_Signal)),min(yy));
+        linemax = max(max(max(Mean_Signal)),max(yy));
+        
+        % Plot the line next
+        l1 = line([0 0], [linemin, linemax],...
+            'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+        % Plot the signals and the mean signal
+        p1 = plot(peri_time, V_FREESOCIAL', 'color', gray1);
+        p2 = plot(peri_time, Mean_Signal, 'color', green, 'LineWidth', 3);
+        hold off;
+        
+        % Make a legend and do other plot things
+        legend([l1, p1(1), p2, h],...
+            {'Airpuff Onset','Trial Traces','Mean Response','Std'},...
+            'Location','northeast');
+        title(['Peri-Event Trial Responses ' subjects.FREESOCIAL{i}],'fontsize',16);
+        ylabel('\DeltaF/F','fontsize',16);
+        axis tight;
+        
+        
+        
+    end
+end
+for ii = 1:size(V_Mean_FREESOCIAL_Signal,1)
+        k = 1;
+        for nn = 1:50:1516-49
+            V_FREESOCIAL_Bins{ii,k} = mean(V_Mean_FREESOCIAL_Signal(ii,nn:nn+49));
+%             V_Base_Binned_Stream{k} = mean(V_Baseline(:,nn:nn+49));
+%             V_Base_Binned_SEM{k} = std(V_Baseline(:,nn:nn+49));
+%             V_Base_Binned_STD{k} = mean(P_STD_Baseline(:,nn:nn+49));
+            k = k+1;
+        end
+end
+
+% Binned Stats
+V_FREESOCIAL_Bins = cell2mat(V_FREESOCIAL_Bins);
+V_FREESOCIAL_Bins(~any(V_FREESOCIAL_Bins,2),:) = [];
+V_FREESOCIAL_Bins2 = mean(V_FREESOCIAL_Bins,1);
+V_STD_FREESOCIAL_Bins = std(V_FREESOCIAL_Bins,1);
+V_SEM_FREESOCIAL_Bins = std(V_FREESOCIAL_Bins,1)/sqrt(length(std(V_FREESOCIAL_Bins,1)));
+
+% Group Stats
+V_FREESOCIAL = mean(V_Mean_FREESOCIAL_Signal,1);
+V_STD_FREESOCIAL = std(V_Mean_FREESOCIAL_Signal,1);
+V_SEM_FREESOCIAL = std(V_Mean_FREESOCIAL_Signal,1)/sqrt(length(std(V_Mean_FREESOCIAL_Signal,1)));
+
+% Group plot
+figure('Position',[100, 100, 600, 750])
+subplot(2,1,1)
+xx = [peri_time, fliplr(peri_time)];
+yy = [V_FREESOCIAL + V_STD_FREESOCIAL,...
+    fliplr(V_FREESOCIAL - V_STD_FREESOCIAL)];
+h = fill(xx, yy, 'g'); % plot this first for overlay purposes
+hold on;
+set(h, 'facealpha', 0.25, 'edgecolor', 'none');
+
+% Set specs for min and max value of event line.
+% Min and max of either std or one of the signal snip traces
+linemin = min(min(min(V_Mean_FREESOCIAL_Signal)),min(yy));
+linemax = max(max(max(V_Mean_FREESOCIAL_Signal)),max(yy));
+
+% Plot the line next
+l1 = line([0 0], [linemin, linemax],...
+    'color','cyan', 'LineStyle', '-', 'LineWidth', 2);
+% Plot the signals and the mean signal
+p1 = plot(peri_time, V_Mean_FREESOCIAL_Signal', 'color', gray1);
+p2 = plot(peri_time, V_FREESOCIAL, 'color', green, 'LineWidth', 3);
+hold off;
+
+% Make a legend and do other plot things
+legend([l1, p1(1), p2, h],...
+    {'Interaction Onset','Trial Traces','Mean Response','Std'},...
+    'Location','northwest');
+title('VEHICLE FREESOCIAL Peri-Event Trial Responses','fontsize',24);
+ylabel('\DeltaF/F','fontsize',22);
+xlabel('Time (s)','fontsize',22);
+% yticks([0 2 4 6 8 10])
+axis tight;
+axis.FontSize = 18;
+
